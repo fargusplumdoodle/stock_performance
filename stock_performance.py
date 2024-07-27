@@ -1,12 +1,11 @@
 import yfinance as yf
 import matplotlib.pyplot as plt
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import argparse
 import os
 import sys
-
-
+import pandas as pd
 def get_stock_data(ticker, period, interval):
     """Fetch stock data for a given ticker, period, and interval."""
     stock = yf.Ticker(ticker)
@@ -25,31 +24,76 @@ def calculate_buy_sell_volumes(data):
     return buy_volume, sell_volume
 
 
-def prepare_price_volume_data(data):
-    """Prepare data for price-volume plot."""
+
+def prepare_price_volume_data(data, interval):
+    """Prepare data for price-volume plot with aggregation based on interval."""
+    # Determine the frequency for resampling based on the interval
+    if interval.endswith('d'):
+        freq = f"{interval[:-1]}D"
+    elif interval.endswith('wk'):
+        freq = f"{interval[:-2]}W"
+    elif interval.endswith('mo'):
+        freq = f"{interval[:-2]}M"
+    else:
+        freq = '1D'  # Default to daily if interval is not recognized
+
+    # Resample and aggregate the data
+    resampled = data.resample(freq).agg({
+        'Volume': 'sum',
+        'Close': 'last'
+    })
+
     return {
-        'dates': data.index,
-        'volume': data['Volume'],
-        'close': data['Close']
+        'dates': resampled.index,
+        'volume': resampled['Volume'],
+        'close': resampled['Close']
     }
-
-
-def prepare_buy_sell_volume_data(data):
-    """Prepare data for buy-sell volume plot."""
+def prepare_buy_sell_volume_data(data, interval):
+    """Prepare data for buy-sell volume plot with aggregation based on interval."""
     buy_volume, sell_volume = calculate_buy_sell_volumes(data)
-    return {
-        'dates': data.index,
+
+    # Determine the frequency for resampling based on the interval
+    if interval.endswith('d'):
+        freq = f"{interval[:-1]}D"
+    elif interval.endswith('wk'):
+        freq = f"{interval[:-2]}W"
+    elif interval.endswith('mo'):
+        freq = f"{interval[:-2]}M"
+    else:
+        freq = '1D'  # Default to daily if interval is not recognized
+
+    # Resample and aggregate the data
+    df = pd.DataFrame({
         'buy_volume': buy_volume,
         'sell_volume': sell_volume
+    })
+    resampled = df.resample(freq).sum()
+
+    return {
+        'dates': resampled.index,
+        'buy_volume': resampled['buy_volume'],
+        'sell_volume': resampled['sell_volume']
     }
 
+def calculate_bar_width(interval):
+    """Calculate bar width in days based on the interval."""
+    if interval.endswith('d'):
+        return int(interval[:-1])
+    elif interval.endswith('wk'):
+        return 7 * int(interval[:-2])
+    elif interval.endswith('mo'):
+        return 30 * int(interval[:-2])  # Approximation, actual month lengths may vary
+    else:
+        return 1  # Default to 1 day if interval is not recognized
 
 def render_price_volume_plot(plot_data, ticker, period, interval):
-    """Render the price-volume plot."""
+    """Render the price-volume plot with bars sized according to the interval."""
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
+    width = calculate_bar_width(interval)
+
     # Plot volume on the first y-axis
-    ax1.bar(plot_data['dates'], plot_data['volume'], width=1, alpha=0.3, color='b', label='Volume')
+    ax1.bar(plot_data['dates'], plot_data['volume'], width=width, align='edge', alpha=0.3, color='b', label='Volume')
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Volume', color='b')
     ax1.tick_params(axis='y', labelcolor='b')
@@ -65,15 +109,15 @@ def render_price_volume_plot(plot_data, ticker, period, interval):
     plt.xticks(rotation=45)
     plt.tight_layout()
 
-
 def render_buy_sell_volume_plot(plot_data, ticker, period, interval):
-    """Render the buy-sell volume plot."""
+    """Render the buy-sell volume plot with bars sized according to the interval."""
     fig, ax = plt.subplots(figsize=(12, 6))
 
+    width = calculate_bar_width(interval)
+
     # Create stacked bar chart
-    ax.bar(plot_data['dates'], plot_data['buy_volume'], color='green', alpha=0.6, label='Estimated Buy Volume')
-    ax.bar(plot_data['dates'], plot_data['sell_volume'], bottom=plot_data['buy_volume'], color='red', alpha=0.6,
-           label='Estimated Sell Volume')
+    ax.bar(plot_data['dates'], plot_data['buy_volume'], width=width, align='edge', color='green', alpha=0.6, label='Estimated Buy Volume')
+    ax.bar(plot_data['dates'], plot_data['sell_volume'], width=width, align='edge', bottom=plot_data['buy_volume'], color='red', alpha=0.6, label='Estimated Sell Volume')
 
     ax.set_xlabel('Date')
     ax.set_ylabel('Volume')
@@ -103,12 +147,12 @@ def plot_price_volume(ticker, period, interval, output_dir):
         return
 
     # Prepare and render price-volume plot
-    price_volume_data = prepare_price_volume_data(data)
+    price_volume_data = prepare_price_volume_data(data, interval)
     render_price_volume_plot(price_volume_data, ticker, period, interval)
     save_plot(f"{ticker}_{period}_{interval}_price_volume.png", output_dir)
 
     # Prepare and render buy-sell volume plot
-    buy_sell_volume_data = prepare_buy_sell_volume_data(data)
+    buy_sell_volume_data = prepare_buy_sell_volume_data(data, interval)
     render_buy_sell_volume_plot(buy_sell_volume_data, ticker, period, interval)
     save_plot(f"{ticker}_{period}_{interval}_buy_sell_volume.png", output_dir)
 
@@ -136,11 +180,6 @@ def print_inception_info(ticker, inception_date, days_since_inception):
         print(f"No data found for {ticker}. Please check if the ticker is correct.")
 
 
-def ensure_to_suffix(ticker):
-    """Ensure the ticker ends with .TO if no suffix is provided."""
-    return ticker if '.' in ticker else f"{ticker}.TO"
-
-
 def validate_period(period):
     """Validate the period argument."""
     valid_periods = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max']
@@ -158,7 +197,6 @@ def validate_interval(interval):
 
 
 def main(ticker, output_dir, periods, interval):
-    ticker = ensure_to_suffix(ticker)
     for period in periods:
         plot_price_volume(ticker, period, interval, output_dir)
     inception_date, days_since_inception = get_inception_info(ticker)
