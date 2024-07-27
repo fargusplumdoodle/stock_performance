@@ -13,19 +13,50 @@ def get_stock_data(ticker, period, interval):
     return stock.history(period=period, interval=interval)
 
 
-def create_price_volume_plot(data, ticker, period, interval):
-    """Create a dual-axis plot with price and volume data."""
+def calculate_buy_sell_volumes(data):
+    """Calculate estimated buy and sell volumes."""
+    buy_volume = data['Volume'] * (data['Close'] - data['Low']) / (data['High'] - data['Low'])
+    sell_volume = data['Volume'] * (data['High'] - data['Close']) / (data['High'] - data['Low'])
+
+    # Handle cases where High and Low are the same (prevents division by zero)
+    buy_volume = buy_volume.fillna(data['Volume'] / 2)
+    sell_volume = sell_volume.fillna(data['Volume'] / 2)
+
+    return buy_volume, sell_volume
+
+
+def prepare_price_volume_data(data):
+    """Prepare data for price-volume plot."""
+    return {
+        'dates': data.index,
+        'volume': data['Volume'],
+        'close': data['Close']
+    }
+
+
+def prepare_buy_sell_volume_data(data):
+    """Prepare data for buy-sell volume plot."""
+    buy_volume, sell_volume = calculate_buy_sell_volumes(data)
+    return {
+        'dates': data.index,
+        'buy_volume': buy_volume,
+        'sell_volume': sell_volume
+    }
+
+
+def render_price_volume_plot(plot_data, ticker, period, interval):
+    """Render the price-volume plot."""
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
     # Plot volume on the first y-axis
-    ax1.bar(data.index, data['Volume'], width=1, alpha=0.3, color='b', label='Volume')
+    ax1.bar(plot_data['dates'], plot_data['volume'], width=1, alpha=0.3, color='b', label='Volume')
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Volume', color='b')
     ax1.tick_params(axis='y', labelcolor='b')
 
     # Create a second y-axis for price
     ax2 = ax1.twinx()
-    ax2.plot(data.index, data['Close'], color='r', label='Closing Price')
+    ax2.plot(plot_data['dates'], plot_data['close'], color='r', label='Closing Price')
     ax2.set_ylabel('Price', color='r')
     ax2.tick_params(axis='y', labelcolor='r')
 
@@ -35,21 +66,14 @@ def create_price_volume_plot(data, ticker, period, interval):
     plt.tight_layout()
 
 
-def create_buy_sell_volume_plot(data, ticker, period, interval):
-    """Create a histogram showing estimated buy and sell volumes for each period."""
+def render_buy_sell_volume_plot(plot_data, ticker, period, interval):
+    """Render the buy-sell volume plot."""
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    # Estimate buy and sell volumes
-    buy_volume = data['Volume'] * (data['Close'] - data['Low']) / (data['High'] - data['Low'])
-    sell_volume = data['Volume'] * (data['High'] - data['Close']) / (data['High'] - data['Low'])
-
-    # Handle cases where High and Low are the same (prevents division by zero)
-    buy_volume = buy_volume.fillna(data['Volume'] / 2)
-    sell_volume = sell_volume.fillna(data['Volume'] / 2)
-
     # Create stacked bar chart
-    ax.bar(data.index, buy_volume, color='green', alpha=0.6, label='Estimated Buy Volume')
-    ax.bar(data.index, sell_volume, bottom=buy_volume, color='red', alpha=0.6, label='Estimated Sell Volume')
+    ax.bar(plot_data['dates'], plot_data['buy_volume'], color='green', alpha=0.6, label='Estimated Buy Volume')
+    ax.bar(plot_data['dates'], plot_data['sell_volume'], bottom=plot_data['buy_volume'], color='red', alpha=0.6,
+           label='Estimated Sell Volume')
 
     ax.set_xlabel('Date')
     ax.set_ylabel('Volume')
@@ -78,12 +102,14 @@ def plot_price_volume(ticker, period, interval, output_dir):
         print(f"No data available for {ticker} with period {period} and interval {interval}")
         return
 
-    # Create and save the regular price-volume plot
-    create_price_volume_plot(data, ticker, period, interval)
+    # Prepare and render price-volume plot
+    price_volume_data = prepare_price_volume_data(data)
+    render_price_volume_plot(price_volume_data, ticker, period, interval)
     save_plot(f"{ticker}_{period}_{interval}_price_volume.png", output_dir)
 
-    # Create and save the buy-sell volume plot
-    create_buy_sell_volume_plot(data, ticker, period, interval)
+    # Prepare and render buy-sell volume plot
+    buy_sell_volume_data = prepare_buy_sell_volume_data(data)
+    render_buy_sell_volume_plot(buy_sell_volume_data, ticker, period, interval)
     save_plot(f"{ticker}_{period}_{interval}_buy_sell_volume.png", output_dir)
 
     print(f"Data points for {period} with {interval} interval: {len(data)}")
